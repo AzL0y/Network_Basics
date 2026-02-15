@@ -1,0 +1,5 @@
+# Ignore executables
+*.out
+*.exe
+a.out
+
