@@ -1,0 +1,170 @@
+#include "mbed.h"
+#include "EthernetInterface.h"
+#include "C12832.h"
+#include "LM75B.h"
+#include <string.h>
+#include <stdlib.h>
+
+// ---------------- GLOBAL CONFIG ----------------
+const char* REMOTE_IP = "172.19.13.54"; // <-- IP of the other Mbed
+#define SERVER_PORT 80
+
+// ---------------- BUFFERS ----------------
+char response[1024];
+char recv_buffer[512];
+
+// ---------------- PERIPHERALS ----------------
+C12832 lcd(p5, p7, p6, p8, p11);
+EthernetInterface net;
+TCPSocket server;
+LM75B sensor(p28, p27);
+
+// ---------------- FORCE MAC ADDRESS ----------------
+extern "C" void mbed_mac_address(char *mac) {
+    mac[0] = 0x4c;
+    mac[1] = 0xd7;
+    mac[2] = 0x17;
+    mac[3] = 0xa1;
+    mac[4] = 0x04;
+    mac[5] = 0xd9;
+}
+
+// ---------------- COMMAND TYPES ----------------
+enum CommandType { CMD_UNKNOWN, CMD_ROOT, CMD_RAW };
+
+// ---------------- PARSE HTTP REQUEST ----------------
+CommandType parse_request(char* buffer) {
+    if (strstr(buffer, "GET /raw") != nullptr) return CMD_RAW;
+    if (strstr(buffer, "GET / ") != nullptr) return CMD_ROOT;
+    return CMD_UNKNOWN;
+}
+
+// ---------------- READ REMOTE TEMPERATURE ----------------
+float get_remote_temperature(const char* remote_ip) {
+    TCPSocket socket;
+    socket.open(&net);
+    SocketAddress addr;
+
+    if (net.gethostbyname(remote_ip, &addr) != 0) return -1;
+    addr.set_port(SERVER_PORT);
+    if (socket.connect(addr) != NSAPI_ERROR_OK) return -1;
+
+    const char* req = "GET /raw HTTP/1.1\r\nHost: mbed\r\n\r\n";
+    socket.send(req, strlen(req));
+
+    char buffer[64];
+    int n = socket.recv(buffer, sizeof(buffer)-1);
+    socket.close();
+    if (n <= 0) return -1;
+
+    buffer[n] = '\0';
+    return atof(buffer);
+}
+
+// ---------------- CONVERT FLOAT TO INT + DEC ----------------
+void temp_to_int(float temp, int &int_ent, int &int_dec) {
+    int_ent = (int)temp;
+    int_dec = (int)((temp - int_ent) * 100);
+    if (int_dec < 0) int_dec = -int_dec;
+}
+
+// ---------------- MAIN ----------------
+int main() {
+    lcd.cls();
+    lcd.locate(0,0);
+    lcd.printf("Config MAC & DHCP...");
+
+    // Connect network
+    if (net.connect() != 0) {
+        lcd.locate(0,10);
+        lcd.printf("Erreur DHCP !");
+        return -1;
+    }
+
+    SocketAddress ip;
+    net.get_ip_address(&ip);
+
+    lcd.cls();
+    lcd.locate(0,0);
+    lcd.printf("IP: %s", ip.get_ip_address());
+    lcd.locate(0,10);
+    lcd.printf("Port: %d (Pret)", SERVER_PORT);
+
+    // Start TCP server
+    server.open(&net);
+    server.bind(SERVER_PORT);
+    server.listen(5);
+
+    while (true) {
+        nsapi_error_t error;
+        TCPSocket *client = server.accept(&error);
+
+        if (error == NSAPI_ERROR_OK && client != NULL) {
+            int received = client->recv(recv_buffer, sizeof(recv_buffer)-1);
+            if (received > 0) recv_buffer[received] = '\0';
+
+            float temp_local = sensor.temp();
+            int int_ent_local, int_dec_local;
+            temp_to_int(temp_local, int_ent_local, int_dec_local);
+
+            CommandType cmd = parse_request(recv_buffer);
+
+            switch(cmd) {
+                // -------------------- RAW RESPONSE FOR OTHER MBED --------------------
+                case CMD_RAW: {
+                    int len = snprintf(response, sizeof(response),
+                        "HTTP/1.1 200 OK\r\n"
+                        "Content-Type: text/plain\r\n"
+                        "Content-Length: 10\r\n\r\n"
+                        "%d.%02d",
+                        int_ent_local, int_dec_local
+                    );
+                    client->send(response, len);
+                    break;
+                }
+
+                // -------------------- HTML RESPONSE FOR BROWSER --------------------
+                case CMD_ROOT: {
+                    float temp_remote = get_remote_temperature(REMOTE_IP);
+                    int int_ent_remote, int_dec_remote;
+                    temp_to_int(temp_remote, int_ent_remote, int_dec_remote);
+
+                    int len = snprintf(response, sizeof(response),
+                        "HTTP/1.1 200 OK\r\n"
+                        "Content-Type: text/html\r\n\r\n"
+                        "<!DOCTYPE html><html>"
+                        "<head><meta http-equiv='refresh' content='2'>"
+                        "<style>"
+                        "body { font-family: Arial; text-align: center; margin-top: 50px; }"
+                        ".card { background: #f4f4f9; padding: 30px; border-radius: 10px; display: inline-block; "
+                        "box-shadow: 0 4px 8px rgba(0,0,0,0.1); }"
+                        ".temp { font-size: 60px; color: #007BFF; font-weight: bold; }"
+                        "</style></head>"
+                        "<body>"
+                        "<div class='card'>"
+                        "<h1>Concentrateur Mbed</h1>"
+                        "<p>Température locale : %d.%02d &deg;C</p>"
+                        "<p>Température distante : %d.%02d &deg;C</p>"
+                        "<p><small>Mise à jour automatique (2s)</small></p>"
+                        "</div>"
+                        "</body></html>",
+                        int_ent_local, int_dec_local,
+                        int_ent_remote, int_dec_remote
+                    );
+                    client->send(response, len);
+                    break;
+                }
+
+                default:
+                    break;
+            }
+
+            client->close();
+            delete client;
+
+            // Update LCD
+            lcd.locate(0,20);
+            lcd.printf("Local: %d.%02d C", int_ent_local, int_dec_local);
+        }
+    }
+}
