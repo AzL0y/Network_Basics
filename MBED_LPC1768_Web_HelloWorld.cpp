@@ -6,12 +6,12 @@ C12832 lcd(p5, p7, p6, p8, p11);
 EthernetInterface net;
 TCPSocket server;
 extern "C" void mbed_mac_address(char *mac) {
-mac[0] = 0x4c;
-mac[1] = 0xd7;
-mac[2] = 0x17;              //4c:d7:17:a1:04:d9
-mac[3] = 0xa1;
-mac[4] = 0x04;
-mac[5] = 0xd9;
+mac[0] = 0xXX;
+mac[1] = 0xXX;
+mac[2] = 0xXX;              //XX:XX:XX:XX:XX:XX
+mac[3] = 0xXX;
+mac[4] = 0xXX;
+mac[5] = 0xXX;
 }
 int main() {
  lcd.cls();
