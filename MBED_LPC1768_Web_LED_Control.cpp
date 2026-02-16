@@ -33,12 +33,12 @@ DigitalOut led(LED1);
 
 // --- FORCE L'ADRESSE MAC ---
 extern "C" void mbed_mac_address(char *mac) {
-    mac[0] = 0x4c;
-    mac[1] = 0xd7;
-    mac[2] = 0x17;
-    mac[3] = 0xa1;
-    mac[4] = 0x04;
-    mac[5] = 0xd9;
+    mac[0] = 0xXX;
+    mac[1] = 0xXX;
+    mac[2] = 0xXX;
+    mac[3] = 0xXX;
+    mac[4] = 0xXX;
+    mac[5] = 0xXX;
 }
 
 int main() {
